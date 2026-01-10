@@ -46,14 +46,9 @@
   cursor: pointer;
 }
 
-.auth-card button:hover {
-  opacity: 0.95;
-}
-
 .switch {
   margin-top: 18px;
   font-size: 14px;
-  color: #555;
 }
 
 .switch span {
