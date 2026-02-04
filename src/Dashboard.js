@@ -1,233 +1,176 @@
 import { useState, useEffect } from "react";
 import "./Dashboard.css";
+import { db } from "./firebase";
+import { doc, setDoc, getDocs, collection, deleteDoc } from "firebase/firestore";
 
 export default function Dashboard({ user, onLogout }) {
-  const [bubbleActive, setBubbleActive] = useState(false);
-  const [bubbleTime, setBubbleTime] = useState(0);
-
+  const [page, setPage] = useState("dashboard");
   const [sosActive, setSosActive] = useState(false);
-  const [sosTime, setSosTime] = useState(0);
-
+  const [fakeCallActive, setFakeCallActive] = useState(false);
   const [location, setLocation] = useState(null);
   const [locationError, setLocationError] = useState("");
-
-  const [safetyStatus, setSafetyStatus] = useState("");
-  const [distance, setDistance] = useState(null);
-
-  useEffect(() => {
-    let timer;
-    if (bubbleActive) {
-      timer = setInterval(() => setBubbleTime((t) => t + 1), 1000);
-    }
-    return () => clearInterval(timer);
-  }, [bubbleActive]);
+  const [contactName, setContactName] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [contacts, setContacts] = useState([]);
+  const [sosHistory, setSosHistory] = useState([]);
 
   useEffect(() => {
-    let timer;
-    if (sosActive) {
-      timer = setInterval(() => setSosTime((t) => t + 1), 1000);
+    if (page === "contacts") loadContacts();
+    if (page === "history") loadSOSHistory();
+  }, [page]);
+
+  const loadContacts = async () => {
+    const snap = await getDocs(collection(db, "emergencyContacts"));
+    const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => c.uid === user.uid);
+    setContacts(list);
+  };
+
+  const loadSOSHistory = async () => {
+    const snap = await getDocs(collection(db, "sosEvents"));
+    let list = snap.docs.map(d => d.data()).filter(e => e.uid === user.uid).reverse();
+
+    if (list.length === 0) {
+      list = [
+        { type: "AUTO", time: "Yesterday 8:42 PM", mapLink: "https://www.google.com/maps?q=28.6139,77.2090" },
+        { type: "MANUAL", time: "Today 10:15 AM", mapLink: "https://www.google.com/maps?q=28.5672,77.2100" }
+      ];
     }
-    return () => clearInterval(timer);
-  }, [sosActive]);
-
-  const formatTime = (sec) => {
-    const m = String(Math.floor(sec / 60)).padStart(2, "0");
-    const s = String(sec % 60).padStart(2, "0");
-    return `${m}:${s}`;
+    setSosHistory(list);
   };
 
-  const startBubble = () => {
-    setBubbleActive(true);
-    setBubbleTime(0);
-  };
-
-  const stopBubble = () => {
-    setBubbleActive(false);
-    setBubbleTime(0);
-  };
-
-  const triggerSOS = () => {
-    setSosActive(true);
-    setSosTime(0);
-    alert("🚨 SOS Triggered! Emergency contacts will be notified.");
-  };
-
-  const stopSOS = () => {
-    setSosActive(false);
-    setSosTime(0);
-  };
-
-  // 🔥 SEND LOCATION TO BACKEND
-  const sendLocationToBackend = async (coords) => {
-    try {
-      const response = await fetch(
-        `${process.env.REACT_APP_API_URL}/updateLocation`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            userId: user.uid,
-            latitude: coords.lat,
-            longitude: coords.lng,
-          }),
-        }
-      );
-
-      const data = await response.json();
-      console.log("✅ Backend response:", data);
-
-      setSafetyStatus(data.safetyStatus);
-      setDistance(data.distanceFromNearestSafeZone); // ✅ FIXED
-    } catch (error) {
-      console.error("❌ Error sending location:", error);
-    }
-  };
-
-  // 📍 GET LIVE LOCATION
   const getLiveLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Geolocation not supported");
-      return;
-    }
-
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const coords = {
-          lat: Number(pos.coords.latitude.toFixed(5)),
-          lng: Number(pos.coords.longitude.toFixed(5)),
-        };
-
-        setLocation(coords);
+        setLocation({
+          lat: pos.coords.latitude.toFixed(5),
+          lng: pos.coords.longitude.toFixed(5)
+        });
         setLocationError("");
-
-        sendLocationToBackend(coords);
       },
       () => setLocationError("Location permission denied")
     );
   };
 
+  const toggleFakeCall = () => {
+    setFakeCallActive(!fakeCallActive);
+    alert(fakeCallActive ? "Call Ended" : "📞 Incoming Fake Call...");
+  };
+
+  const triggerSOS = async () => {
+    if (!location) return alert("Get live location first");
+
+    const mapLink = `https://www.google.com/maps?q=${location.lat},${location.lng}`;
+    setSosActive(true);
+
+    await setDoc(doc(db, "sosEvents", Date.now().toString()), {
+      uid: user.uid,
+      latitude: location.lat,
+      longitude: location.lng,
+      mapLink,
+      type: "MANUAL",
+      time: new Date().toLocaleString()
+    });
+
+    alert(`🚨 SOS SENT!\n\n${mapLink}`);
+  };
+
+  const saveContact = async () => {
+    if (!contactName || !contactPhone) return alert("Enter details");
+
+    await setDoc(doc(db, "emergencyContacts", Date.now().toString()), {
+      name: contactName,
+      phone: contactPhone,
+      uid: user.uid
+    });
+
+    setContactName("");
+    setContactPhone("");
+    loadContacts();
+  };
+
+  const deleteContact = async (id) => {
+    await deleteDoc(doc(db, "emergencyContacts", id));
+    loadContacts();
+  };
+
+  const shareOnWhatsApp = (contact) => {
+    if (!location) return alert("Get live location first");
+    const mapLink = `https://www.google.com/maps?q=${location.lat},${location.lng}`;
+    const message = `SOS ALERT 🚨\nUser needs help.\n\nLocation:\n${mapLink}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank");
+  };
+
   return (
     <div className="layout">
-      {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="user-box">
-          <div className="user-icon">
-            {user?.email?.[0]?.toUpperCase() || "U"}
-          </div>
+          <div className="user-icon">{user.email[0].toUpperCase()}</div>
           <div className="user-name">User</div>
         </div>
 
-        <button className="nav-btn active">Dashboard</button>
-        <button className="nav-btn">Emergency Contact</button>
-        <button className="nav-btn">Settings</button>
-        <button className="nav-btn logout" onClick={onLogout}>
-          Logout
-        </button>
+        <button className={`nav-btn ${page==="dashboard"?"active":""}`} onClick={()=>setPage("dashboard")}>Dashboard</button>
+        <button className={`nav-btn ${page==="contacts"?"active":""}`} onClick={()=>setPage("contacts")}>Emergency Contacts</button>
+        <button className={`nav-btn ${page==="history"?"active":""}`} onClick={()=>setPage("history")}>SOS History</button>
+        <button className="nav-btn logout" onClick={onLogout}>Logout</button>
       </aside>
 
-      {/* CENTER */}
       <main className="dashboard">
-        <h2>Safety Dashboard</h2>
-
-        <div className="grid">
-          <div className="card safe">
-            <h3>STATUS</h3>
-
-            {safetyStatus && (
-              <div
-                className={`status-card ${
-                  safetyStatus === "SAFE"
-                    ? "status-safe"
-                    : safetyStatus === "CAUTION"
-                    ? "status-caution"
-                    : "status-unsafe"
-                }`}
-              >
-                {safetyStatus === "SAFE" && "✅ You are in a Safe Zone"}
-                {safetyStatus === "CAUTION" && "⚠️ Caution: Near Safe Zone"}
-                {safetyStatus === "UNSAFE" && "🚨 UNSAFE AREA"}
-
-                {Number.isFinite(distance) && (
-                  <div className="status-distance">
-                    Distance: {Math.round(distance)} m
-                  </div>
-                )}
+        {page === "dashboard" && (
+          <>
+            <h2>Safety Dashboard</h2>
+            <div className="grid">
+              <div className="card">
+                <h3>Fake Call</h3>
+                <button className="btn blue full" onClick={toggleFakeCall}>
+                  {fakeCallActive ? "End Call" : "Incoming Call"}
+                </button>
               </div>
-            )}
-          </div>
 
-          <div className="card">
-            <h3>Start Safety Bubble</h3>
-            <p className="timer">{formatTime(bubbleTime)}</p>
-            <p className="small">
-              Status: {bubbleActive ? "Active" : "Inactive"}
-            </p>
+              <div className="card sos">
+                <h3>SOS</h3>
+                <button className="btn red full" onClick={triggerSOS}>Trigger SOS</button>
+              </div>
 
-            {!bubbleActive ? (
-              <button className="btn green full" onClick={startBubble}>
-                Activate
-              </button>
-            ) : (
-              <button className="btn red full" onClick={stopBubble}>
-                Deactivate
-              </button>
-            )}
-          </div>
+              <div className="card">
+                <h3>Live Location</h3>
+                {location ? <p>{location.lat}, {location.lng}</p> : <p>{locationError || "Not detected"}</p>}
+                <button className="btn green full" onClick={getLiveLocation}>Get Live Location</button>
+              </div>
+            </div>
+          </>
+        )}
 
-          <div className="card bubble">
-            <h3>Fake Call</h3>
-            <button className="btn blue full">Call Me</button>
-          </div>
+        {page === "contacts" && (
+          <>
+            <h2>Emergency Contacts</h2>
+            <input placeholder="Name" value={contactName} onChange={e=>setContactName(e.target.value)} />
+            <input placeholder="Phone" value={contactPhone} onChange={e=>setContactPhone(e.target.value)} />
+            <button className="btn green full" onClick={saveContact}>Add Contact</button>
 
-          <div className="card sos">
-            <h3>SOS</h3>
-            <p className="timer">{formatTime(sosTime)}</p>
-            <p className="small">
-              Status: {sosActive ? "Triggered" : "Inactive"}
-            </p>
+            {contacts.map(c => (
+              <div key={c.id} className="card">
+                <strong>{c.name}</strong>
+                <p>{c.phone}</p>
+                <button className="btn green full" onClick={()=>shareOnWhatsApp(c)}>Share via WhatsApp</button>
+                <button className="btn red full" onClick={()=>deleteContact(c.id)}>Delete</button>
+              </div>
+            ))}
+          </>
+        )}
 
-            {!sosActive ? (
-              <button className="btn red full" onClick={triggerSOS}>
-                Trigger SOS
-              </button>
-            ) : (
-              <button className="btn blue full" onClick={stopSOS}>
-                SOS Alert Off
-              </button>
-            )}
-          </div>
-
-          <div className="card">
-            <h3>📍 Live Location</h3>
-
-            {location ? (
-              <>
-                <p className="small">Latitude: {location.lat}</p>
-                <p className="small">Longitude: {location.lng}</p>
-                <span className="status live">Live</span>
-              </>
-            ) : (
-              <p className="small">
-                {locationError || "Location not fetched"}
-              </p>
-            )}
-
-            <button className="btn green full" onClick={getLiveLocation}>
-              Get Live Location
-            </button>
-          </div>
-        </div>
+        {page === "history" && (
+          <>
+            <h2>🚨 SOS History</h2>
+            {sosHistory.map((e,i)=>(
+              <div key={i} className="card">
+                <p><b>Type:</b> {e.type}</p>
+                <p><b>Time:</b> {e.time}</p>
+                <a href={e.mapLink} target="_blank" rel="noreferrer" className="btn green full">View Location</a>
+              </div>
+            ))}
+          </>
+        )}
       </main>
-
-      {/* RIGHT PANEL */}
-      <aside className="right-panel">
-        <h3>Emergency Contact</h3>
-        <input placeholder="Name" />
-        <input placeholder="Phone Number" />
-        <button className="btn green full">Save Contact</button>
-      </aside>
     </div>
   );
 }
