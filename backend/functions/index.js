@@ -69,69 +69,136 @@
 // });
 const { onRequest } = require("firebase-functions/https");
 const admin = require("firebase-admin");
+const { FieldValue } = require("firebase-admin/firestore");
 
 admin.initializeApp();
 const db = admin.firestore();
 
-const SAFE_LOCATION = {
-  latitude: 28.6139,
-  longitude: 77.2090
-};
-
-const SAFE_RADIUS_METERS = 500;
+// ------------------ GEO UTILITY ------------------
 function getDistanceInMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000; // Earth radius in meters
-  const toRad = (value) => (value * Math.PI) / 180;
+  const R = 6371000;
+  const toRad = (v) => (v * Math.PI) / 180;
 
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
 
   const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) *
       Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+      Math.sin(dLon / 2) ** 2;
 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
-
-// Update user location
+// ------------------ MAIN FUNCTION ------------------
 exports.updateLocation = onRequest(async (req, res) => {
   try {
     const { userId, latitude, longitude } = req.body;
 
-    if (!userId || latitude === undefined || longitude === undefined) {
-      return res.status(400).json({ error: "Missing data" });
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+
+    if (!userId || isNaN(lat) || isNaN(lon)) {
+      return res.status(400).json({ error: "Invalid data" });
     }
 
-    const distance = getDistanceInMeters(
-      latitude,
-      longitude,
-      SAFE_LOCATION.latitude,
-      SAFE_LOCATION.longitude
-    );
+    const safeSnapshot = await db.collection("safe_zones").get();
+    const unsafeSnapshot = await db.collection("unsafe_zones").get();
 
-    const safetyStatus = distance <= SAFE_RADIUS_METERS ? "SAFE" : "UNSAFE";
+    let safetyStatus = "UNSAFE";
 
+    let nearestSafeZone = null;
+    let minSafeDistance = null;
+
+    let isInUnsafeZone = false;
+    let unsafeZoneType = null;
+    let unsafeSeverity = null;
+
+    const currentHour = new Date().getHours();
+
+    // ---------- 1️⃣ CHECK UNSAFE ZONES (TOP PRIORITY) ----------
+    unsafeSnapshot.forEach((doc) => {
+      const zone = doc.data();
+
+      const distance = getDistanceInMeters(
+        lat,
+        lon,
+        zone.latitude,
+        zone.longitude
+      );
+
+      if (distance <= zone.radius) {
+        isInUnsafeZone = true;
+        unsafeZoneType = zone.type;
+        unsafeSeverity = zone.severity;
+      }
+    });
+
+    // If inside unsafe → stop further checks
+    if (isInUnsafeZone) {
+      safetyStatus = "UNSAFE";
+    } else {
+      // ---------- 2️⃣ CHECK SAFE ZONES ----------
+      safeSnapshot.forEach((doc) => {
+        const zone = doc.data();
+
+        const distance = getDistanceInMeters(
+          lat,
+          lon,
+          zone.latitude,
+          zone.longitude
+        );
+
+        if (minSafeDistance === null || distance < minSafeDistance) {
+          minSafeDistance = distance;
+          nearestSafeZone = zone;
+        }
+
+        // ⛑ ACTIVE HOURS ARE OPTIONAL
+        const isActive =
+          zone.activeFrom === undefined ||
+          zone.activeTo === undefined ||
+          (currentHour >= zone.activeFrom &&
+            currentHour <= zone.activeTo);
+
+        if (distance <= zone.radius && isActive) {
+          safetyStatus = "SAFE";
+        }
+      });
+
+      // ---------- 3️⃣ CAUTION ----------
+      if (
+        safetyStatus !== "SAFE" &&
+        minSafeDistance !== null &&
+        minSafeDistance <= 800
+      ) {
+        safetyStatus = "CAUTION";
+      }
+    }
+
+    // ---------- WRITE LOCATION ----------
     await db.collection("locations").doc(userId).set({
-      latitude,
-      longitude,
-      distance,
+      latitude: lat,
+      longitude: lon,
       safetyStatus,
-      timestamp: new Date(),
+      nearestSafeZoneType: nearestSafeZone?.type || null,
+      distanceFromNearestSafeZone: minSafeDistance,
+      unsafeZoneType,
+      unsafeSeverity,
+      timestamp: FieldValue.serverTimestamp(),
     });
 
-    res.status(200).json({
-      message: "Location updated successfully",
+    // ---------- RESPONSE ----------
+    res.json({
       safetyStatus,
-      distance,
+      nearestSafeZoneType: nearestSafeZone?.type || null,
+      distanceFromNearestSafeZone: minSafeDistance,
+      unsafeZoneType,
+      unsafeSeverity,
     });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Internal Server Error" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
   }
 });
