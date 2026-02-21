@@ -4,19 +4,15 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDTa9pz85SW-JPAnuGjaGSih5g4H_tRors",
-  authDomain: "cloud-personal-bubble-cfd2b.firebaseapp.com",
-  projectId: "cloud-personal-bubble-cfd2b",
-  storageBucket: "cloud-personal-bubble-cfd2b.firebasestorage.app",
-  messagingSenderId: "17140123356",
-  appId: "1:17140123356:web:ce610f58f52c3082361619",
-  measurementId: "G-9SD1FL4TX9"
+  apiKey: "AIzaSyADpiYT_wGKLAWCd-DqTTGyX2L00reRgBU",
+  authDomain: "cloud-personal-bubble.firebaseapp.com",
+  projectId: "cloud-personal-bubble",
+  storageBucket: "cloud-personal-bubble.firebasestorage.app",
+  messagingSenderId: "1069639997798",
+  appId: "1:1069639997798:web:716fd7f3787530df3090a7"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-
-
